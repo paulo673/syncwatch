@@ -1,0 +1,20 @@
+{
+  "name": "syncwatch-extension",
+  "version": "1.0.0",
+  "description": "SyncWatch browser extension",
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "socket.io-client": "^4.7.4"
+  },
+  "devDependencies": {
+    "@crxjs/vite-plugin": "^2.0.0-beta.23",
+    "@types/chrome": "^0.0.260",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.12"
+  }
+}
