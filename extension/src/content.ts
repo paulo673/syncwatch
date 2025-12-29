@@ -16,6 +16,8 @@ interface SyncState {
   isRemoteAction: boolean; // Flag to prevent event loops
   isBuffering: boolean;
   partnerBuffering: boolean;
+  partnerLoading: boolean; // Partner is loading (page reload)
+  isReady: boolean; // This user is ready to play
   lastEventTimestamp: number;
 }
 
@@ -28,6 +30,8 @@ const state: SyncState = {
   isRemoteAction: false,
   isBuffering: false,
   partnerBuffering: false,
+  partnerLoading: false,
+  isReady: false,
   lastEventTimestamp: 0,
 };
 
@@ -75,6 +79,7 @@ function initSocket(): Socket {
   socket.on("connect", () => {
     console.log("[SyncWatch] Connected to server");
     state.isConnected = true;
+    state.isReady = false; // Reset ready state on reconnect
 
     // Auto-join room if we have a room ID
     if (state.roomId) {
@@ -101,14 +106,44 @@ function initSocket(): Socket {
           state.videoElement!.currentTime = data.currentTime;
         });
       }
-      if (data.isPlaying && state.videoElement.paused) {
+
+      // Don't auto-play yet - wait for video to be ready, then emit user_ready
+      // The server will coordinate resume_after_buffer when all users are ready
+      if (data.isPlaying) {
+        // Pause first, will resume when all are ready
         executeRemoteAction(() => {
-          state.videoElement!.play();
+          state.videoElement!.pause();
         });
       } else if (!data.isPlaying && !state.videoElement.paused) {
         executeRemoteAction(() => {
           state.videoElement!.pause();
         });
+      }
+
+      // Signal ready when video can play through
+      const signalReady = () => {
+        if (!state.isReady && socket.connected) {
+          state.isReady = true;
+          socket.emit("user_ready");
+          console.log("[SyncWatch] Signaled ready to server");
+        }
+      };
+
+      // Check if video is already ready to play
+      if (state.videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+        signalReady();
+      } else {
+        // Wait for canplaythrough event
+        const handleCanPlayThrough = () => {
+          signalReady();
+          state.videoElement!.removeEventListener("canplaythrough", handleCanPlayThrough);
+        };
+        state.videoElement.addEventListener("canplaythrough", handleCanPlayThrough);
+
+        // Fallback: signal ready after 3 seconds even if video isn't fully loaded
+        setTimeout(() => {
+          signalReady();
+        }, 3000);
       }
     }
   });
@@ -204,6 +239,31 @@ function initSocket(): Socket {
   // User left notification
   socket.on("user_left", (data) => {
     console.log(`[SyncWatch] ${data.username} left the room. Users: ${data.userCount}`);
+  });
+
+  // Someone is loading (page reload or initial join)
+  socket.on("user_loading", (data) => {
+    if (data.userId === socket.id) return; // Ignore our own loading
+
+    console.log(`[SyncWatch] Partner is loading: ${data.username}`);
+    state.partnerLoading = true;
+
+    // Pause while partner is loading
+    if (state.videoElement && !state.videoElement.paused) {
+      executeRemoteAction(() => {
+        state.videoElement!.pause();
+      });
+      console.log("[SyncWatch] Paused - Waiting for partner to load...");
+    }
+  });
+
+  // Someone finished loading
+  socket.on("user_ready", (data) => {
+    console.log(`[SyncWatch] ${data.username || "User"} is ready. Loading: ${data.loadingCount}`);
+
+    if (data.loadingCount === 0) {
+      state.partnerLoading = false;
+    }
   });
 
   return socket;
@@ -308,6 +368,15 @@ function joinRoom(roomId: string): void {
 
   state.roomId = roomId;
 
+  // Persist room to chrome.storage for reconnection after reload
+  chrome.storage.local.set({
+    activeRoom: {
+      roomId,
+      url: window.location.href,
+      timestamp: Date.now()
+    }
+  });
+
   state.socket.emit("join_room", {
     roomId,
     username: state.username,
@@ -360,6 +429,8 @@ function setupBackgroundMessageListener(): void {
           username: state.username,
           isBuffering: state.isBuffering,
           partnerBuffering: state.partnerBuffering,
+          partnerLoading: state.partnerLoading,
+          isReady: state.isReady,
         });
         break;
 
@@ -407,6 +478,30 @@ function setupMessageListener(api: SyncWatchAPI): void {
   logger.info("Content Script", "Message listener setup for MAIN world communication");
 }
 
+// Check for stored room and auto-reconnect
+async function checkStoredRoom(): Promise<string | null> {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(['activeRoom'], (result) => {
+      if (result.activeRoom && result.activeRoom.roomId) {
+        // Check if this is the same video URL (base URL without params)
+        const storedUrl = new URL(result.activeRoom.url);
+        const currentUrl = new URL(window.location.href);
+
+        // Compare video ID for YouTube
+        const storedVideoId = storedUrl.searchParams.get('v');
+        const currentVideoId = currentUrl.searchParams.get('v');
+
+        if (storedVideoId && currentVideoId && storedVideoId === currentVideoId) {
+          console.log(`[SyncWatch] Found stored room: ${result.activeRoom.roomId}`);
+          resolve(result.activeRoom.roomId);
+          return;
+        }
+      }
+      resolve(null);
+    });
+  });
+}
+
 // Initialize SyncWatch
 function init(): void {
   console.log("[SyncWatch] Initializing...");
@@ -416,13 +511,20 @@ function init(): void {
   setupBackgroundMessageListener();
 
   // Wait for video element to be available
-  const checkForVideo = setInterval(() => {
+  const checkForVideo = setInterval(async () => {
     const video = findVideoElement();
     if (video) {
       clearInterval(checkForVideo);
       state.videoElement = video;
       console.log("[SyncWatch] Video element found");
       logger.info("Content Script", "Video element found");
+
+      // Check for stored room before initializing socket
+      const storedRoomId = await checkStoredRoom();
+      if (storedRoomId && !state.roomId) {
+        state.roomId = storedRoomId;
+        console.log(`[SyncWatch] Will auto-reconnect to room: ${storedRoomId}`);
+      }
 
       // Initialize socket connection
       state.socket = initSocket();
@@ -443,6 +545,8 @@ function init(): void {
           username: state.username,
           isBuffering: state.isBuffering,
           partnerBuffering: state.partnerBuffering,
+          partnerLoading: state.partnerLoading,
+          isReady: state.isReady,
         }),
         setUsername: (name: string) => {
           state.username = name;
@@ -481,6 +585,8 @@ interface SyncWatchAPI {
     username: string;
     isBuffering: boolean;
     partnerBuffering: boolean;
+    partnerLoading: boolean;
+    isReady: boolean;
   };
   setUsername: (name: string) => void;
 }

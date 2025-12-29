@@ -9,6 +9,7 @@ interface RoomState {
   currentTime: number;
   isPlaying: boolean;
   bufferingUsers: Set<string>;
+  loadingUsers: Set<string>; // Users who are loading (page reload, initial join)
   lastUpdate: number;
 }
 
@@ -35,6 +36,7 @@ function getOrCreateRoom(roomId: string): RoomState {
       currentTime: 0,
       isPlaying: false,
       bufferingUsers: new Set(),
+      loadingUsers: new Set(),
       lastUpdate: Date.now(),
     });
   }
@@ -54,6 +56,15 @@ function isRoomBuffering(roomId: string): boolean {
   return room ? room.bufferingUsers.size > 0 : false;
 }
 
+function isRoomLoading(roomId: string): boolean {
+  const room = rooms.get(roomId);
+  return room ? room.loadingUsers.size > 0 : false;
+}
+
+function isRoomWaiting(roomId: string): boolean {
+  return isRoomBuffering(roomId) || isRoomLoading(roomId);
+}
+
 io.on("connection", (socket: Socket) => {
   console.log(`[Connection] User connected: ${socket.id}`);
 
@@ -67,6 +78,11 @@ io.on("connection", (socket: Socket) => {
       const previousInfo = users.get(socket.id);
       if (previousInfo) {
         socket.leave(previousInfo.roomId);
+        const prevRoom = rooms.get(previousInfo.roomId);
+        if (prevRoom) {
+          prevRoom.loadingUsers.delete(socket.id);
+          prevRoom.bufferingUsers.delete(socket.id);
+        }
         io.to(previousInfo.roomId).emit("user_left", {
           userId: socket.id,
           username: previousInfo.username,
@@ -78,10 +94,28 @@ io.on("connection", (socket: Socket) => {
       users.set(socket.id, { roomId, username });
 
       const room = getOrCreateRoom(roomId);
+      const userCount = getRoomUserCount(roomId);
 
       // If this is the first user and they have a video URL, set it
       if (videoUrl && !room.videoUrl) {
         room.videoUrl = videoUrl;
+      }
+
+      // Add user to loading set - they need to signal ready before playback resumes
+      // Only add to loading if there are other users in the room
+      if (userCount > 1) {
+        room.loadingUsers.add(socket.id);
+
+        // Notify others that someone is loading (they should pause)
+        socket.to(roomId).emit("user_loading", {
+          userId: socket.id,
+          username,
+          loadingCount: room.loadingUsers.size,
+        });
+
+        console.log(
+          `[Loading] Room ${roomId}: ${username} is loading. Total loading: ${room.loadingUsers.size}`
+        );
       }
 
       // Send current room state to the joining user
@@ -90,19 +124,20 @@ io.on("connection", (socket: Socket) => {
         videoUrl: room.videoUrl,
         currentTime: room.currentTime,
         isPlaying: room.isPlaying,
-        userCount: getRoomUserCount(roomId),
+        userCount,
         isBuffering: isRoomBuffering(roomId),
+        isLoading: isRoomLoading(roomId),
       });
 
       // Notify others in the room
       socket.to(roomId).emit("user_joined", {
         userId: socket.id,
         username,
-        userCount: getRoomUserCount(roomId),
+        userCount,
       });
 
       console.log(
-        `[Room] ${username} (${socket.id}) joined room: ${roomId}. Users: ${getRoomUserCount(roomId)}`
+        `[Room] ${username} (${socket.id}) joined room: ${roomId}. Users: ${userCount}`
       );
     }
   );
@@ -176,6 +211,37 @@ io.on("connection", (socket: Socket) => {
     );
   });
 
+  // User is ready (finished loading after page load/reload)
+  socket.on("user_ready", () => {
+    const userInfo = users.get(socket.id);
+    if (!userInfo) return;
+
+    const room = rooms.get(userInfo.roomId);
+    if (!room) return;
+
+    room.loadingUsers.delete(socket.id);
+
+    io.to(userInfo.roomId).emit("user_ready", {
+      userId: socket.id,
+      username: userInfo.username,
+      loadingCount: room.loadingUsers.size,
+    });
+
+    console.log(
+      `[Ready] Room ${userInfo.roomId}: ${userInfo.username} is ready. Total loading: ${room.loadingUsers.size}`
+    );
+
+    // If no one is loading or buffering anymore and video was playing, resume all
+    if (!isRoomWaiting(userInfo.roomId) && room.isPlaying) {
+      io.to(userInfo.roomId).emit("resume_after_buffer", {
+        currentTime: room.currentTime,
+      });
+      console.log(
+        `[Resume] Room ${userInfo.roomId}: All users ready, resuming playback`
+      );
+    }
+  });
+
   // Buffering start event
   socket.on("buffering_start", () => {
     const userInfo = users.get(socket.id);
@@ -214,8 +280,8 @@ io.on("connection", (socket: Socket) => {
       bufferingCount: room.bufferingUsers.size,
     });
 
-    // If no one is buffering anymore and video was playing, notify to resume
-    if (room.bufferingUsers.size === 0 && room.isPlaying) {
+    // If no one is waiting (buffering or loading) and video was playing, notify to resume
+    if (!isRoomWaiting(userInfo.roomId) && room.isPlaying) {
       io.to(userInfo.roomId).emit("resume_after_buffer", {
         currentTime: room.currentTime,
       });
@@ -248,12 +314,14 @@ io.on("connection", (socket: Socket) => {
       const room = rooms.get(userInfo.roomId);
       if (room) {
         room.bufferingUsers.delete(socket.id);
+        room.loadingUsers.delete(socket.id);
 
-        // Notify room about buffering status change
-        if (room.bufferingUsers.size === 0) {
-          io.to(userInfo.roomId).emit("buffering_end", {
-            userId: socket.id,
-            bufferingCount: 0,
+        // If video was playing and no one is waiting anymore, resume
+        // (but only if there are still users in the room)
+        const remainingUsers = getRoomUserCount(userInfo.roomId) - 1;
+        if (remainingUsers > 0 && !isRoomWaiting(userInfo.roomId) && room.isPlaying) {
+          io.to(userInfo.roomId).emit("resume_after_buffer", {
+            currentTime: room.currentTime,
           });
         }
       }
