@@ -110,6 +110,16 @@
       transform: scale(0.98);
     }
 
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    button:disabled:hover {
+      opacity: 0.5;
+    }
+
     .btn-primary {
       background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
       color: #fff;
@@ -187,6 +197,12 @@
 
   <div class="footer">
     Go to YouTube and open a video to start
+  </div>
+
+  <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1);">
+    <button class="btn-secondary" id="viewLogs" style="width: 100%; font-size: 11px; padding: 8px;">
+      View Logs
+    </button>
   </div>
 
   <script src="popup.ts" type="module"></script>

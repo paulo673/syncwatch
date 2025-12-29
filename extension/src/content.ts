@@ -1,4 +1,5 @@
 import { io, Socket } from "socket.io-client";
+import { logger } from "./utils/logger";
 
 // Configuration
 const SERVER_URL = "http://localhost:3000";
@@ -323,9 +324,45 @@ function createRoom(): string {
   return roomId;
 }
 
+// Setup message listener to communicate with MAIN world script (main-world.ts)
+// The MAIN world script is injected via manifest.json with "world": "MAIN"
+// This avoids CSP violations that occur with inline script injection
+function setupMessageListener(api: SyncWatchAPI): void {
+  // Listen for messages from MAIN world
+  window.addEventListener('message', (event) => {
+    // Only accept messages from same origin
+    if (event.source !== window) return;
+
+    const { type, roomId, username } = event.data;
+
+    switch (type) {
+      case 'SYNCWATCH_JOIN_ROOM':
+        api.joinRoom(roomId);
+        break;
+
+      case 'SYNCWATCH_CREATE_ROOM':
+        const newRoomId = api.createRoom();
+        window.postMessage({ type: 'SYNCWATCH_ROOM_CREATED', roomId: newRoomId }, '*');
+        break;
+
+      case 'SYNCWATCH_GET_STATE':
+        const currentState = api.getState();
+        window.postMessage({ type: 'SYNCWATCH_STATE', state: currentState }, '*');
+        break;
+
+      case 'SYNCWATCH_SET_USERNAME':
+        api.setUsername(username);
+        break;
+    }
+  });
+
+  logger.info("Content Script", "Message listener setup for MAIN world communication");
+}
+
 // Initialize SyncWatch
 function init(): void {
   console.log("[SyncWatch] Initializing...");
+  logger.info("Content Script", "Initializing SyncWatch", { url: window.location.href });
 
   // Wait for video element to be available
   const checkForVideo = setInterval(() => {
@@ -334,6 +371,7 @@ function init(): void {
       clearInterval(checkForVideo);
       state.videoElement = video;
       console.log("[SyncWatch] Video element found");
+      logger.info("Content Script", "Video element found");
 
       // Initialize socket connection
       state.socket = initSocket();
@@ -342,7 +380,10 @@ function init(): void {
       setupVideoListeners(video);
 
       // Expose API to window for popup/background script communication
-      (window as unknown as { syncWatch: SyncWatchAPI }).syncWatch = {
+      // IMPORTANT: We need to expose this in the MAIN world, not ISOLATED world
+      // So we inject a script tag that has access to the page's window object
+
+      const api: SyncWatchAPI = {
         joinRoom,
         createRoom,
         getState: () => ({
@@ -357,7 +398,15 @@ function init(): void {
         },
       };
 
+      // Expose in ISOLATED world (for content script access)
+      (window as unknown as { syncWatch: SyncWatchAPI }).syncWatch = api;
+
+      // Setup listener to communicate with MAIN world script
+      // The MAIN world script (main-world.ts) is injected via manifest.json
+      setupMessageListener(api);
+
       console.log("[SyncWatch] Ready! Use window.syncWatch.createRoom() or window.syncWatch.joinRoom('roomId')");
+      logger.info("Content Script", "SyncWatch API ready and exposed to window");
     }
   }, 500);
 
@@ -366,6 +415,7 @@ function init(): void {
     clearInterval(checkForVideo);
     if (!state.videoElement) {
       console.log("[SyncWatch] No video element found after 30 seconds");
+      logger.warn("Content Script", "No video element found after 30 seconds", { url: window.location.href });
     }
   }, 30000);
 }
