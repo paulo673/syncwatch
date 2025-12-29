@@ -138,11 +138,46 @@
       margin-bottom: 16px;
     }
 
+    .room-id-container {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
     .room-id {
       font-family: monospace;
       font-size: 11px;
-      word-break: break-all;
       color: #0ea5e9;
+      margin: 0;
+    }
+
+    .copy-icon {
+      background: none;
+      border: none;
+      padding: 2px;
+      cursor: pointer;
+      color: #888;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 3px;
+      transition: color 0.2s, background 0.2s;
+      width: 20px;
+      height: 20px;
+    }
+
+    .copy-icon:hover {
+      color: #0ea5e9;
+      background: rgba(14, 165, 233, 0.15);
+    }
+
+    .copy-icon.copied {
+      color: #44ff44;
+    }
+
+    .copy-icon svg {
+      width: 14px;
+      height: 14px;
     }
 
     .hidden {
@@ -186,7 +221,15 @@
   <div id="inRoom" class="hidden">
     <div class="room-info">
       <label>Room ID</label>
-      <p class="room-id" id="currentRoomId">-</p>
+      <div class="room-id-container">
+        <p class="room-id" id="currentRoomId">-</p>
+        <button class="copy-icon" id="copyRoomId" title="Copy Room ID">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+          </svg>
+        </button>
+      </div>
     </div>
 
     <div class="button-group">

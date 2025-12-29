@@ -18,6 +18,7 @@ const roomIdInput = document.getElementById("roomId") as HTMLInputElement;
 const createRoomBtn = document.getElementById("createRoom") as HTMLButtonElement;
 const joinRoomBtn = document.getElementById("joinRoom") as HTMLButtonElement;
 const copyLinkBtn = document.getElementById("copyLink") as HTMLButtonElement;
+const copyRoomIdBtn = document.getElementById("copyRoomId") as HTMLButtonElement;
 const leaveRoomBtn = document.getElementById("leaveRoom") as HTMLButtonElement;
 const currentRoomIdEl = document.getElementById("currentRoomId") as HTMLParagraphElement;
 const viewLogsBtn = document.getElementById("viewLogs") as HTMLButtonElement;
@@ -325,6 +326,18 @@ copyLinkBtn.addEventListener("click", async () => {
     copyLinkBtn.textContent = "Copied!";
     setTimeout(() => {
       copyLinkBtn.textContent = "Copy Link";
+    }, 2000);
+  }
+});
+
+// Copy room ID only
+copyRoomIdBtn.addEventListener("click", async () => {
+  const roomId = currentRoomIdEl.textContent;
+  if (roomId && roomId !== "-") {
+    await navigator.clipboard.writeText(roomId);
+    copyRoomIdBtn.classList.add("copied");
+    setTimeout(() => {
+      copyRoomIdBtn.classList.remove("copied");
     }, 2000);
   }
 });
