@@ -1,10 +1,30 @@
 import { io, Socket } from "socket.io-client";
 import { logger } from "./utils/logger";
+import {
+  injectChatUI,
+  setupChatEventListeners,
+  appendMessage,
+  renderMessages,
+  updateTypingIndicator,
+  setCurrentUser,
+  setChatVisibility,
+} from "./chat/chat-ui";
 
 // Configuration
 const SERVER_URL = "http://localhost:3000";
 const SYNC_TOLERANCE_SECONDS = 1;
 const DEBOUNCE_DELAY_MS = 300;
+const TYPING_EMIT_INTERVAL = 2000;
+const TYPING_STOP_DELAY = 1000;
+
+// Chat message structure
+interface ChatMessage {
+  messageId: string;
+  userId: string;
+  username: string;
+  text: string;
+  timestamp: number;
+}
 
 // State management
 interface SyncState {
@@ -19,6 +39,12 @@ interface SyncState {
   partnerLoading: boolean; // Partner is loading (page reload)
   isReady: boolean; // This user is ready to play
   lastEventTimestamp: number;
+  // Chat state
+  chatMessages: ChatMessage[];
+  typingUsers: Map<string, string>; // socketId -> username
+  isChatVisible: boolean;
+  typingTimeout: ReturnType<typeof setTimeout> | null;
+  lastTypingEmit: number;
 }
 
 const state: SyncState = {
@@ -33,6 +59,12 @@ const state: SyncState = {
   partnerLoading: false,
   isReady: false,
   lastEventTimestamp: 0,
+  // Chat state
+  chatMessages: [],
+  typingUsers: new Map(),
+  isChatVisible: true,
+  typingTimeout: null,
+  lastTypingEmit: 0,
 };
 
 // Debounce utility to prevent rapid-fire events
@@ -266,6 +298,52 @@ function initSocket(): Socket {
     }
   });
 
+  // Chat history received on join
+  socket.on("chat_history", (data: { messages: ChatMessage[] }) => {
+    console.log(`[SyncWatch] Chat history received: ${data.messages.length} messages`);
+    state.chatMessages = data.messages;
+    window.postMessage({ type: 'SYNCWATCH_CHAT_HISTORY', messages: data.messages }, '*');
+
+    // Inject chat UI if not already injected
+    injectChatUIWithRetry();
+
+    // Update current user info and render messages
+    setCurrentUser(socket.id || null, state.username);
+    renderMessages(data.messages);
+  });
+
+  // Chat message received
+  socket.on("chat_message", (message: ChatMessage) => {
+    console.log(`[SyncWatch] Chat message: ${message.username}: ${message.text}`);
+    state.chatMessages.push(message);
+    if (state.chatMessages.length > 100) {
+      state.chatMessages.shift();
+    }
+    window.postMessage({ type: 'SYNCWATCH_CHAT_MESSAGE', message }, '*');
+
+    // Update UI
+    appendMessage(message);
+  });
+
+  // Typing indicators
+  socket.on("typing_start", (data: { userId: string; username: string }) => {
+    state.typingUsers.set(data.userId, data.username);
+    const typingUsers = Array.from(state.typingUsers.values());
+    window.postMessage({ type: 'SYNCWATCH_TYPING_UPDATE', typingUsers }, '*');
+
+    // Update UI
+    updateTypingIndicator(typingUsers);
+  });
+
+  socket.on("typing_stop", (data: { userId: string }) => {
+    state.typingUsers.delete(data.userId);
+    const typingUsers = Array.from(state.typingUsers.values());
+    window.postMessage({ type: 'SYNCWATCH_TYPING_UPDATE', typingUsers }, '*');
+
+    // Update UI
+    updateTypingIndicator(typingUsers);
+  });
+
   return socket;
 }
 
@@ -357,6 +435,61 @@ function setupVideoListeners(video: HTMLVideoElement): void {
   video.addEventListener("playing", handleBufferingEnd);
 
   console.log("[SyncWatch] Video event listeners attached");
+}
+
+// Send chat message
+function sendChatMessage(text: string): void {
+  if (!state.socket || !state.isConnected || !state.roomId) return;
+
+  const trimmedText = text.trim().slice(0, 500);
+  if (!trimmedText) return;
+
+  state.socket.emit("chat_message", {
+    text: trimmedText,
+    timestamp: Date.now(),
+  });
+
+  // Stop typing indicator
+  if (state.typingTimeout) {
+    clearTimeout(state.typingTimeout);
+    state.typingTimeout = null;
+  }
+  state.socket.emit("typing_stop");
+}
+
+// Handle typing with debounce
+function handleTyping(): void {
+  if (!state.socket || !state.isConnected || !state.roomId) return;
+
+  const now = Date.now();
+
+  // Emit typing_start at most every TYPING_EMIT_INTERVAL
+  if (now - state.lastTypingEmit > TYPING_EMIT_INTERVAL) {
+    state.socket.emit("typing_start");
+    state.lastTypingEmit = now;
+  }
+
+  // Clear existing timeout
+  if (state.typingTimeout) {
+    clearTimeout(state.typingTimeout);
+  }
+
+  // Set timeout to stop typing indicator
+  state.typingTimeout = setTimeout(() => {
+    state.socket?.emit("typing_stop");
+    state.typingTimeout = null;
+  }, TYPING_STOP_DELAY);
+}
+
+// Leave room and clear chat state
+function leaveRoom(): void {
+  if (state.socket && state.roomId) {
+    state.socket.disconnect();
+  }
+  state.roomId = null;
+  state.chatMessages = [];
+  state.typingUsers.clear();
+  chrome.storage.local.remove(['activeRoom']);
 }
 
 // Join a room
@@ -452,7 +585,7 @@ function setupMessageListener(api: SyncWatchAPI): void {
     // Only accept messages from same origin
     if (event.source !== window) return;
 
-    const { type, roomId, username } = event.data;
+    const { type, roomId, username, text, visible } = event.data;
 
     switch (type) {
       case 'SYNCWATCH_JOIN_ROOM':
@@ -472,10 +605,67 @@ function setupMessageListener(api: SyncWatchAPI): void {
       case 'SYNCWATCH_SET_USERNAME':
         api.setUsername(username);
         break;
+
+      case 'SYNCWATCH_SEND_CHAT':
+        sendChatMessage(text);
+        break;
+
+      case 'SYNCWATCH_TYPING':
+        handleTyping();
+        break;
+
+      case 'SYNCWATCH_GET_CHAT_MESSAGES':
+        window.postMessage({ type: 'SYNCWATCH_CHAT_HISTORY', messages: state.chatMessages }, '*');
+        break;
+
+      case 'SYNCWATCH_TOGGLE_CHAT':
+        state.isChatVisible = visible !== undefined ? visible : !state.isChatVisible;
+        window.postMessage({ type: 'SYNCWATCH_CHAT_VISIBILITY', visible: state.isChatVisible }, '*');
+        break;
+
+      case 'SYNCWATCH_GET_SOCKET_ID':
+        window.postMessage({ type: 'SYNCWATCH_SOCKET_ID', socketId: state.socket?.id || null }, '*');
+        break;
+
+      case 'SYNCWATCH_LEAVE_ROOM':
+        leaveRoom();
+        break;
     }
   });
 
   logger.info("Content Script", "Message listener setup for MAIN world communication");
+}
+
+// Inject chat UI with retry mechanism
+let chatUIInjected = false;
+function injectChatUIWithRetry(): void {
+  if (chatUIInjected) return;
+
+  const tryInject = () => {
+    if (injectChatUI()) {
+      chatUIInjected = true;
+
+      // Setup event listeners
+      setupChatEventListeners(
+        // onSendMessage
+        (text) => sendChatMessage(text),
+        // onTyping
+        () => handleTyping(),
+        // onToggle
+        (visible) => {
+          state.isChatVisible = visible;
+          setChatVisibility(visible);
+        }
+      );
+
+      console.log('[SyncWatch] Chat UI setup complete');
+    } else {
+      // Retry after 500ms
+      setTimeout(tryInject, 500);
+    }
+  };
+
+  tryInject();
 }
 
 // Check for stored room and auto-reconnect
@@ -547,6 +737,7 @@ function init(): void {
           partnerBuffering: state.partnerBuffering,
           partnerLoading: state.partnerLoading,
           isReady: state.isReady,
+          socketId: state.socket?.id || null,
         }),
         setUsername: (name: string) => {
           state.username = name;
@@ -587,6 +778,7 @@ interface SyncWatchAPI {
     partnerBuffering: boolean;
     partnerLoading: boolean;
     isReady: boolean;
+    socketId: string | null;
   };
   setUsername: (name: string) => void;
 }

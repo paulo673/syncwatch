@@ -3,6 +3,15 @@ import { Server, Socket } from "socket.io";
 
 const PORT = process.env.PORT || 3000;
 
+// Chat message structure
+interface ChatMessage {
+  messageId: string;
+  userId: string;
+  username: string;
+  text: string;
+  timestamp: number;
+}
+
 // Room state management
 interface RoomState {
   videoUrl: string | null;
@@ -11,6 +20,8 @@ interface RoomState {
   bufferingUsers: Set<string>;
   loadingUsers: Set<string>; // Users who are loading (page reload, initial join)
   lastUpdate: number;
+  chatMessages: ChatMessage[];
+  typingUsers: Map<string, string>; // socketId -> username
 }
 
 interface UserInfo {
@@ -38,6 +49,8 @@ function getOrCreateRoom(roomId: string): RoomState {
       bufferingUsers: new Set(),
       loadingUsers: new Set(),
       lastUpdate: Date.now(),
+      chatMessages: [],
+      typingUsers: new Map(),
     });
   }
   return rooms.get(roomId)!;
@@ -127,6 +140,11 @@ io.on("connection", (socket: Socket) => {
         userCount,
         isBuffering: isRoomBuffering(roomId),
         isLoading: isRoomLoading(roomId),
+      });
+
+      // Send chat history (last 50 messages)
+      socket.emit("chat_history", {
+        messages: room.chatMessages.slice(-50),
       });
 
       // Notify others in the room
@@ -307,6 +325,75 @@ io.on("connection", (socket: Socket) => {
     });
   });
 
+  // Chat message
+  socket.on("chat_message", (data: { text: string; timestamp: number }) => {
+    const userInfo = users.get(socket.id);
+    if (!userInfo) return;
+
+    const room = rooms.get(userInfo.roomId);
+    if (!room) return;
+
+    // Sanitize and validate message
+    const text = data.text.trim().slice(0, 500);
+    if (!text) return;
+
+    const message: ChatMessage = {
+      messageId: `${socket.id}_${data.timestamp}`,
+      userId: socket.id,
+      username: userInfo.username,
+      text,
+      timestamp: data.timestamp,
+    };
+
+    // Store message (keep last 100)
+    room.chatMessages.push(message);
+    if (room.chatMessages.length > 100) {
+      room.chatMessages.shift();
+    }
+
+    // Clear typing indicator for this user
+    room.typingUsers.delete(socket.id);
+
+    // Broadcast to all users in room (including sender for confirmation)
+    io.to(userInfo.roomId).emit("chat_message", message);
+
+    console.log(
+      `[Chat] Room ${userInfo.roomId}: ${userInfo.username}: ${text.slice(0, 50)}${text.length > 50 ? "..." : ""}`
+    );
+  });
+
+  // Typing start
+  socket.on("typing_start", () => {
+    const userInfo = users.get(socket.id);
+    if (!userInfo) return;
+
+    const room = rooms.get(userInfo.roomId);
+    if (!room) return;
+
+    room.typingUsers.set(socket.id, userInfo.username);
+
+    socket.to(userInfo.roomId).emit("typing_start", {
+      userId: socket.id,
+      username: userInfo.username,
+    });
+  });
+
+  // Typing stop
+  socket.on("typing_stop", () => {
+    const userInfo = users.get(socket.id);
+    if (!userInfo) return;
+
+    const room = rooms.get(userInfo.roomId);
+    if (!room) return;
+
+    room.typingUsers.delete(socket.id);
+
+    socket.to(userInfo.roomId).emit("typing_stop", {
+      userId: socket.id,
+      username: userInfo.username,
+    });
+  });
+
   // Disconnect
   socket.on("disconnect", () => {
     const userInfo = users.get(socket.id);
@@ -315,6 +402,15 @@ io.on("connection", (socket: Socket) => {
       if (room) {
         room.bufferingUsers.delete(socket.id);
         room.loadingUsers.delete(socket.id);
+
+        // Clear typing indicator
+        if (room.typingUsers.has(socket.id)) {
+          room.typingUsers.delete(socket.id);
+          io.to(userInfo.roomId).emit("typing_stop", {
+            userId: socket.id,
+            username: userInfo.username,
+          });
+        }
 
         // If video was playing and no one is waiting anymore, resume
         // (but only if there are still users in the room)
