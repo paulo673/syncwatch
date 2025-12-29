@@ -324,6 +324,54 @@ function createRoom(): string {
   return roomId;
 }
 
+// Setup listener for messages from background script (chrome.runtime)
+// This must be called immediately to catch early messages (e.g., auto-join from URL)
+function setupBackgroundMessageListener(): void {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    switch (message.type) {
+      case 'JOIN_ROOM':
+        if (message.roomId) {
+          console.log(`[SyncWatch] Received JOIN_ROOM from background: ${message.roomId}`);
+          // Store roomId in state - will auto-join when socket connects
+          state.roomId = message.roomId;
+          // If already connected, join immediately
+          if (state.socket && state.isConnected) {
+            joinRoom(message.roomId);
+          }
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ error: 'No roomId provided' });
+        }
+        break;
+
+      case 'CREATE_ROOM':
+        if (state.socket && state.isConnected) {
+          const newRoomId = createRoom();
+          sendResponse({ success: true, roomId: newRoomId });
+        } else {
+          sendResponse({ error: 'Not connected yet' });
+        }
+        break;
+
+      case 'GET_STATE':
+        sendResponse({
+          isConnected: state.isConnected,
+          roomId: state.roomId,
+          username: state.username,
+          isBuffering: state.isBuffering,
+          partnerBuffering: state.partnerBuffering,
+        });
+        break;
+
+      default:
+        sendResponse({ error: 'Unknown message type' });
+    }
+    return true; // Keep channel open for async response
+  });
+
+  console.log("[SyncWatch] Background message listener registered");
+}
+
 // Setup message listener to communicate with MAIN world script (main-world.ts)
 // The MAIN world script is injected via manifest.json with "world": "MAIN"
 // This avoids CSP violations that occur with inline script injection
@@ -363,6 +411,9 @@ function setupMessageListener(api: SyncWatchAPI): void {
 function init(): void {
   console.log("[SyncWatch] Initializing...");
   logger.info("Content Script", "Initializing SyncWatch", { url: window.location.href });
+
+  // Register background message listener immediately to catch auto-join from URL
+  setupBackgroundMessageListener();
 
   // Wait for video element to be available
   const checkForVideo = setInterval(() => {
