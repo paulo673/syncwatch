@@ -64,7 +64,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.tabId) {
         chrome.scripting.executeScript({
           target: { tabId: message.tabId },
-          files: ["src/content.ts"],
+          files: ["src/content/index.ts"],
         });
         sendResponse({ success: true });
       }

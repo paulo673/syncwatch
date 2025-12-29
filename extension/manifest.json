@@ -13,7 +13,7 @@
     "https://youtube.com/*"
   ],
   "background": {
-    "service_worker": "src/background.ts",
+    "service_worker": "src/background/index.ts",
     "type": "module"
   },
   "content_scripts": [
@@ -22,7 +22,7 @@
         "https://www.youtube.com/*",
         "https://youtube.com/*"
       ],
-      "js": ["src/content.ts"],
+      "js": ["src/content/index.ts"],
       "run_at": "document_idle"
     },
     {
@@ -37,6 +37,6 @@
   ],
   "action": {
     "default_title": "SyncWatch",
-    "default_popup": "src/popup/index.html"
+    "default_popup": "src/features/popup/index.html"
   }
 }

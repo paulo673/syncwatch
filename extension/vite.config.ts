@@ -1,15 +1,25 @@
 import { defineConfig } from "vite";
 import { crx } from "@crxjs/vite-plugin";
+import react from "@vitejs/plugin-react";
+import { resolve } from "path";
 import manifest from "./manifest.json";
 
 export default defineConfig({
-  plugins: [crx({ manifest })],
+  plugins: [
+    react(),
+    crx({ manifest }),
+  ],
+  resolve: {
+    alias: {
+      "@": resolve(__dirname, "./src"),
+    },
+  },
   build: {
     outDir: "dist",
     rollupOptions: {
       input: {
-        content: "src/content.ts",
-        background: "src/background.ts",
+        content: "src/content/index.ts",
+        background: "src/background/index.ts",
       },
     },
   },

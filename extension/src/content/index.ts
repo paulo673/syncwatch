@@ -1,14 +1,15 @@
 import { io, Socket } from "socket.io-client";
-import { logger } from "./utils/logger";
+import { logger } from "@/shared/lib/logger";
+import { debounce } from "@/shared/hooks/use-debounce";
 import {
-  injectChatUI,
-  setupChatEventListeners,
+  injectChat,
   appendMessage,
+  appendSystemEvent,
   renderMessages,
   updateTypingIndicator,
   setCurrentUser,
-  setChatVisibility,
-} from "./chat/chat-ui";
+  type ChatMessage,
+} from "@/features/chat";
 
 // Configuration
 const SERVER_URL = "http://localhost:3000";
@@ -17,15 +18,6 @@ const DEBOUNCE_DELAY_MS = 300;
 const TYPING_EMIT_INTERVAL = 2000;
 const TYPING_STOP_DELAY = 1000;
 
-// Chat message structure
-interface ChatMessage {
-  messageId: string;
-  userId: string;
-  username: string;
-  text: string;
-  timestamp: number;
-}
-
 // State management
 interface SyncState {
   socket: Socket | null;
@@ -33,15 +25,14 @@ interface SyncState {
   roomId: string | null;
   username: string;
   isConnected: boolean;
-  isRemoteAction: boolean; // Flag to prevent event loops
+  isRemoteAction: boolean;
   isBuffering: boolean;
   partnerBuffering: boolean;
-  partnerLoading: boolean; // Partner is loading (page reload)
-  isReady: boolean; // This user is ready to play
+  partnerLoading: boolean;
+  isReady: boolean;
   lastEventTimestamp: number;
-  // Chat state
   chatMessages: ChatMessage[];
-  typingUsers: Map<string, string>; // socketId -> username
+  typingUsers: Map<string, string>;
   isChatVisible: boolean;
   typingTimeout: ReturnType<typeof setTimeout> | null;
   lastTypingEmit: number;
@@ -59,7 +50,6 @@ const state: SyncState = {
   partnerLoading: false,
   isReady: false,
   lastEventTimestamp: 0,
-  // Chat state
   chatMessages: [],
   typingUsers: new Map(),
   isChatVisible: true,
@@ -67,23 +57,10 @@ const state: SyncState = {
   lastTypingEmit: 0,
 };
 
-// Debounce utility to prevent rapid-fire events
-function debounce<T extends (...args: unknown[]) => void>(
-  fn: T,
-  delay: number
-): (...args: Parameters<T>) => void {
-  let timeoutId: ReturnType<typeof setTimeout> | null = null;
-  return (...args: Parameters<T>) => {
-    if (timeoutId) clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => fn(...args), delay);
-  };
-}
-
 // Wrapper to execute actions without triggering local event listeners
 function executeRemoteAction(action: () => void): void {
   state.isRemoteAction = true;
   action();
-  // Reset flag after a short delay to allow the event to propagate
   setTimeout(() => {
     state.isRemoteAction = false;
   }, 100);
@@ -91,11 +68,8 @@ function executeRemoteAction(action: () => void): void {
 
 // Find the YouTube video element
 function findVideoElement(): HTMLVideoElement | null {
-  // YouTube uses a video element inside the player
   const video = document.querySelector<HTMLVideoElement>("video.html5-main-video");
   if (video) return video;
-
-  // Fallback: find any video element
   return document.querySelector<HTMLVideoElement>("video");
 }
 
@@ -111,9 +85,8 @@ function initSocket(): Socket {
   socket.on("connect", () => {
     console.log("[SyncWatch] Connected to server");
     state.isConnected = true;
-    state.isReady = false; // Reset ready state on reconnect
+    state.isReady = false;
 
-    // Auto-join room if we have a room ID
     if (state.roomId) {
       joinRoom(state.roomId);
     }
@@ -139,10 +112,7 @@ function initSocket(): Socket {
         });
       }
 
-      // Don't auto-play yet - wait for video to be ready, then emit user_ready
-      // The server will coordinate resume_after_buffer when all users are ready
       if (data.isPlaying) {
-        // Pause first, will resume when all are ready
         executeRemoteAction(() => {
           state.videoElement!.pause();
         });
@@ -152,7 +122,6 @@ function initSocket(): Socket {
         });
       }
 
-      // Signal ready when video can play through
       const signalReady = () => {
         if (!state.isReady && socket.connected) {
           state.isReady = true;
@@ -161,21 +130,15 @@ function initSocket(): Socket {
         }
       };
 
-      // Check if video is already ready to play
-      if (state.videoElement.readyState >= 3) { // HAVE_FUTURE_DATA or HAVE_ENOUGH_DATA
+      if (state.videoElement.readyState >= 3) {
         signalReady();
       } else {
-        // Wait for canplaythrough event
         const handleCanPlayThrough = () => {
           signalReady();
           state.videoElement!.removeEventListener("canplaythrough", handleCanPlayThrough);
         };
         state.videoElement.addEventListener("canplaythrough", handleCanPlayThrough);
-
-        // Fallback: signal ready after 3 seconds even if video isn't fully loaded
-        setTimeout(() => {
-          signalReady();
-        }, 3000);
+        setTimeout(() => signalReady(), 3000);
       }
     }
   });
@@ -188,13 +151,19 @@ function initSocket(): Socket {
     const timeDiff = Math.abs(state.videoElement.currentTime - data.currentTime);
 
     executeRemoteAction(() => {
-      // If time difference is greater than tolerance, seek first
       if (timeDiff > SYNC_TOLERANCE_SECONDS) {
-        console.log(`[SyncWatch] Time diff ${timeDiff.toFixed(2)}s > ${SYNC_TOLERANCE_SECONDS}s, seeking...`);
         state.videoElement!.currentTime = data.currentTime;
       }
       state.videoElement!.play();
     });
+
+    if (data.username) {
+      appendSystemEvent({
+        type: 'play',
+        username: data.username,
+        timestamp: Date.now(),
+      });
+    }
   });
 
   // Pause command from server
@@ -204,11 +173,18 @@ function initSocket(): Socket {
 
     executeRemoteAction(() => {
       state.videoElement!.pause();
-      // Sync time on pause as well
       if (Math.abs(state.videoElement!.currentTime - data.currentTime) > SYNC_TOLERANCE_SECONDS) {
         state.videoElement!.currentTime = data.currentTime;
       }
     });
+
+    if (data.username) {
+      appendSystemEvent({
+        type: 'pause',
+        username: data.username,
+        timestamp: Date.now(),
+      });
+    }
   });
 
   // Seek command from server
@@ -221,10 +197,9 @@ function initSocket(): Socket {
     });
   });
 
-  // Someone started buffering
+  // Buffering events
   socket.on("buffering_start", (data) => {
-    if (data.userId === socket.id) return; // Ignore our own buffering
-
+    if (data.userId === socket.id) return;
     console.log(`[SyncWatch] Partner is buffering: ${data.username}`);
     state.partnerBuffering = true;
 
@@ -232,20 +207,16 @@ function initSocket(): Socket {
       executeRemoteAction(() => {
         state.videoElement!.pause();
       });
-      console.log("[SyncWatch] Paused - Waiting for partner...");
     }
   });
 
-  // Someone finished buffering
   socket.on("buffering_end", (data) => {
     console.log(`[SyncWatch] Buffering ended for: ${data.username || "user"}`);
-
     if (data.bufferingCount === 0) {
       state.partnerBuffering = false;
     }
   });
 
-  // Resume after everyone finished buffering
   socket.on("resume_after_buffer", (data) => {
     console.log("[SyncWatch] All partners ready, resuming...");
     if (!state.videoElement) return;
@@ -263,56 +234,57 @@ function initSocket(): Socket {
     });
   });
 
-  // User joined notification
+  // User events
   socket.on("user_joined", (data) => {
     console.log(`[SyncWatch] ${data.username} joined the room. Users: ${data.userCount}`);
+    appendSystemEvent({
+      type: 'join',
+      username: data.username,
+      timestamp: Date.now(),
+    });
   });
 
-  // User left notification
   socket.on("user_left", (data) => {
     console.log(`[SyncWatch] ${data.username} left the room. Users: ${data.userCount}`);
+    appendSystemEvent({
+      type: 'leave',
+      username: data.username,
+      timestamp: Date.now(),
+    });
   });
 
-  // Someone is loading (page reload or initial join)
   socket.on("user_loading", (data) => {
-    if (data.userId === socket.id) return; // Ignore our own loading
-
+    if (data.userId === socket.id) return;
     console.log(`[SyncWatch] Partner is loading: ${data.username}`);
     state.partnerLoading = true;
 
-    // Pause while partner is loading
     if (state.videoElement && !state.videoElement.paused) {
       executeRemoteAction(() => {
         state.videoElement!.pause();
       });
-      console.log("[SyncWatch] Paused - Waiting for partner to load...");
     }
   });
 
-  // Someone finished loading
   socket.on("user_ready", (data) => {
     console.log(`[SyncWatch] ${data.username || "User"} is ready. Loading: ${data.loadingCount}`);
-
     if (data.loadingCount === 0) {
       state.partnerLoading = false;
     }
   });
 
-  // Chat history received on join
+  // Chat events
   socket.on("chat_history", (data: { messages: ChatMessage[] }) => {
     console.log(`[SyncWatch] Chat history received: ${data.messages.length} messages`);
     state.chatMessages = data.messages;
     window.postMessage({ type: 'SYNCWATCH_CHAT_HISTORY', messages: data.messages }, '*');
 
-    // Inject chat UI if not already injected
-    injectChatUIWithRetry();
-
-    // Update current user info and render messages
     setCurrentUser(socket.id || null, state.username);
-    renderMessages(data.messages);
+
+    injectChatUIWithRetry(() => {
+      renderMessages(data.messages);
+    });
   });
 
-  // Chat message received
   socket.on("chat_message", (message: ChatMessage) => {
     console.log(`[SyncWatch] Chat message: ${message.username}: ${message.text}`);
     state.chatMessages.push(message);
@@ -320,8 +292,6 @@ function initSocket(): Socket {
       state.chatMessages.shift();
     }
     window.postMessage({ type: 'SYNCWATCH_CHAT_MESSAGE', message }, '*');
-
-    // Update UI
     appendMessage(message);
   });
 
@@ -330,8 +300,6 @@ function initSocket(): Socket {
     state.typingUsers.set(data.userId, data.username);
     const typingUsers = Array.from(state.typingUsers.values());
     window.postMessage({ type: 'SYNCWATCH_TYPING_UPDATE', typingUsers }, '*');
-
-    // Update UI
     updateTypingIndicator(typingUsers);
   });
 
@@ -339,8 +307,6 @@ function initSocket(): Socket {
     state.typingUsers.delete(data.userId);
     const typingUsers = Array.from(state.typingUsers.values());
     window.postMessage({ type: 'SYNCWATCH_TYPING_UPDATE', typingUsers }, '*');
-
-    // Update UI
     updateTypingIndicator(typingUsers);
   });
 
@@ -349,10 +315,8 @@ function initSocket(): Socket {
 
 // Setup video event listeners
 function setupVideoListeners(video: HTMLVideoElement): void {
-  // Debounced emit functions to prevent spam
   const emitPlay = debounce(() => {
     if (state.isRemoteAction || !state.socket || !state.isConnected) return;
-
     console.log("[SyncWatch] Emitting play event");
     state.socket.emit("play", {
       currentTime: video.currentTime,
@@ -362,7 +326,6 @@ function setupVideoListeners(video: HTMLVideoElement): void {
 
   const emitPause = debounce(() => {
     if (state.isRemoteAction || !state.socket || !state.isConnected) return;
-
     console.log("[SyncWatch] Emitting pause event");
     state.socket.emit("pause", {
       currentTime: video.currentTime,
@@ -372,7 +335,6 @@ function setupVideoListeners(video: HTMLVideoElement): void {
 
   const emitSeek = debounce(() => {
     if (state.isRemoteAction || !state.socket || !state.isConnected) return;
-
     console.log("[SyncWatch] Emitting seek event");
     state.socket.emit("seek", {
       currentTime: video.currentTime,
@@ -380,52 +342,34 @@ function setupVideoListeners(video: HTMLVideoElement): void {
     });
   }, DEBOUNCE_DELAY_MS);
 
-  // Play event
   video.addEventListener("play", () => {
-    if (state.isRemoteAction) {
-      console.log("[SyncWatch] Ignoring remote-triggered play event");
-      return;
-    }
+    if (state.isRemoteAction) return;
     emitPlay();
   });
 
-  // Pause event
   video.addEventListener("pause", () => {
-    if (state.isRemoteAction) {
-      console.log("[SyncWatch] Ignoring remote-triggered pause event");
-      return;
-    }
+    if (state.isRemoteAction) return;
     emitPause();
   });
 
-  // Seeking event (when user drags the progress bar)
   video.addEventListener("seeked", () => {
-    if (state.isRemoteAction) {
-      console.log("[SyncWatch] Ignoring remote-triggered seek event");
-      return;
-    }
+    if (state.isRemoteAction) return;
     emitSeek();
   });
 
-  // Buffering start (waiting event)
   video.addEventListener("waiting", () => {
-    if (state.isBuffering) return; // Already buffering
-
+    if (state.isBuffering) return;
     state.isBuffering = true;
     console.log("[SyncWatch] Buffering started");
-
     if (state.socket && state.isConnected) {
       state.socket.emit("buffering_start");
     }
   });
 
-  // Buffering end (canplay or playing events)
   const handleBufferingEnd = () => {
-    if (!state.isBuffering) return; // Wasn't buffering
-
+    if (!state.isBuffering) return;
     state.isBuffering = false;
     console.log("[SyncWatch] Buffering ended");
-
     if (state.socket && state.isConnected) {
       state.socket.emit("buffering_end");
     }
@@ -437,7 +381,7 @@ function setupVideoListeners(video: HTMLVideoElement): void {
   console.log("[SyncWatch] Video event listeners attached");
 }
 
-// Send chat message
+// Chat functions
 function sendChatMessage(text: string): void {
   if (!state.socket || !state.isConnected || !state.roomId) return;
 
@@ -449,7 +393,6 @@ function sendChatMessage(text: string): void {
     timestamp: Date.now(),
   });
 
-  // Stop typing indicator
   if (state.typingTimeout) {
     clearTimeout(state.typingTimeout);
     state.typingTimeout = null;
@@ -457,31 +400,27 @@ function sendChatMessage(text: string): void {
   state.socket.emit("typing_stop");
 }
 
-// Handle typing with debounce
 function handleTyping(): void {
   if (!state.socket || !state.isConnected || !state.roomId) return;
 
   const now = Date.now();
 
-  // Emit typing_start at most every TYPING_EMIT_INTERVAL
   if (now - state.lastTypingEmit > TYPING_EMIT_INTERVAL) {
     state.socket.emit("typing_start");
     state.lastTypingEmit = now;
   }
 
-  // Clear existing timeout
   if (state.typingTimeout) {
     clearTimeout(state.typingTimeout);
   }
 
-  // Set timeout to stop typing indicator
   state.typingTimeout = setTimeout(() => {
     state.socket?.emit("typing_stop");
     state.typingTimeout = null;
   }, TYPING_STOP_DELAY);
 }
 
-// Leave room and clear chat state
+// Room functions
 function leaveRoom(): void {
   if (state.socket && state.roomId) {
     state.socket.disconnect();
@@ -492,7 +431,6 @@ function leaveRoom(): void {
   chrome.storage.local.remove(['activeRoom']);
 }
 
-// Join a room
 function joinRoom(roomId: string): void {
   if (!state.socket || !state.isConnected) {
     console.error("[SyncWatch] Cannot join room: not connected");
@@ -501,7 +439,6 @@ function joinRoom(roomId: string): void {
 
   state.roomId = roomId;
 
-  // Persist room to chrome.storage for reconnection after reload
   chrome.storage.local.set({
     activeRoom: {
       roomId,
@@ -519,24 +456,19 @@ function joinRoom(roomId: string): void {
   console.log(`[SyncWatch] Joining room: ${roomId}`);
 }
 
-// Create a new room
 function createRoom(): string {
   const roomId = `room_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
   joinRoom(roomId);
   return roomId;
 }
 
-// Setup listener for messages from background script (chrome.runtime)
-// This must be called immediately to catch early messages (e.g., auto-join from URL)
+// Background message listener
 function setupBackgroundMessageListener(): void {
   chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     switch (message.type) {
       case 'JOIN_ROOM':
         if (message.roomId) {
-          console.log(`[SyncWatch] Received JOIN_ROOM from background: ${message.roomId}`);
-          // Store roomId in state - will auto-join when socket connects
           state.roomId = message.roomId;
-          // If already connected, join immediately
           if (state.socket && state.isConnected) {
             joinRoom(message.roomId);
           }
@@ -570,19 +502,32 @@ function setupBackgroundMessageListener(): void {
       default:
         sendResponse({ error: 'Unknown message type' });
     }
-    return true; // Keep channel open for async response
+    return true;
   });
 
   console.log("[SyncWatch] Background message listener registered");
 }
 
-// Setup message listener to communicate with MAIN world script (main-world.ts)
-// The MAIN world script is injected via manifest.json with "world": "MAIN"
-// This avoids CSP violations that occur with inline script injection
+// API interface
+interface SyncWatchAPI {
+  joinRoom: (roomId: string) => void;
+  createRoom: () => string;
+  getState: () => {
+    isConnected: boolean;
+    roomId: string | null;
+    username: string;
+    isBuffering: boolean;
+    partnerBuffering: boolean;
+    partnerLoading: boolean;
+    isReady: boolean;
+    socketId: string | null;
+  };
+  setUsername: (name: string) => void;
+}
+
+// Message listener for MAIN world
 function setupMessageListener(api: SyncWatchAPI): void {
-  // Listen for messages from MAIN world
   window.addEventListener('message', (event) => {
-    // Only accept messages from same origin
     if (event.source !== window) return;
 
     const { type, roomId, username, text, visible } = event.data;
@@ -636,48 +581,56 @@ function setupMessageListener(api: SyncWatchAPI): void {
   logger.info("Content Script", "Message listener setup for MAIN world communication");
 }
 
-// Inject chat UI with retry mechanism
+// Chat UI injection with retry
 let chatUIInjected = false;
-function injectChatUIWithRetry(): void {
-  if (chatUIInjected) return;
+let chatUICallbacks: (() => void)[] = [];
+
+function injectChatUIWithRetry(onReady?: () => void): void {
+  if (onReady) {
+    chatUICallbacks.push(onReady);
+  }
+
+  if (chatUIInjected) {
+    const callbacks = chatUICallbacks;
+    chatUICallbacks = [];
+    callbacks.forEach(cb => cb());
+    return;
+  }
 
   const tryInject = () => {
-    if (injectChatUI()) {
+    const success = injectChat({
+      onSendMessage: (text) => sendChatMessage(text),
+      onTyping: () => handleTyping(),
+      onToggle: (visible) => {
+        state.isChatVisible = visible;
+      },
+    });
+
+    if (success) {
       chatUIInjected = true;
+      console.log('[SyncWatch] React Chat UI setup complete');
 
-      // Setup event listeners
-      setupChatEventListeners(
-        // onSendMessage
-        (text) => sendChatMessage(text),
-        // onTyping
-        () => handleTyping(),
-        // onToggle
-        (visible) => {
-          state.isChatVisible = visible;
-          setChatVisibility(visible);
-        }
-      );
-
-      console.log('[SyncWatch] Chat UI setup complete');
+      const callbacks = chatUICallbacks;
+      chatUICallbacks = [];
+      callbacks.forEach(cb => cb());
     } else {
-      // Retry after 500ms
       setTimeout(tryInject, 500);
     }
   };
 
-  tryInject();
+  if (!chatUIInjected && chatUICallbacks.length <= 1) {
+    tryInject();
+  }
 }
 
-// Check for stored room and auto-reconnect
+// Check for stored room
 async function checkStoredRoom(): Promise<string | null> {
   return new Promise((resolve) => {
     chrome.storage.local.get(['activeRoom'], (result) => {
       if (result.activeRoom && result.activeRoom.roomId) {
-        // Check if this is the same video URL (base URL without params)
         const storedUrl = new URL(result.activeRoom.url);
         const currentUrl = new URL(window.location.href);
 
-        // Compare video ID for YouTube
         const storedVideoId = storedUrl.searchParams.get('v');
         const currentVideoId = currentUrl.searchParams.get('v');
 
@@ -692,15 +645,13 @@ async function checkStoredRoom(): Promise<string | null> {
   });
 }
 
-// Initialize SyncWatch
+// Initialize
 function init(): void {
   console.log("[SyncWatch] Initializing...");
   logger.info("Content Script", "Initializing SyncWatch", { url: window.location.href });
 
-  // Register background message listener immediately to catch auto-join from URL
   setupBackgroundMessageListener();
 
-  // Wait for video element to be available
   const checkForVideo = setInterval(async () => {
     const video = findVideoElement();
     if (video) {
@@ -709,22 +660,14 @@ function init(): void {
       console.log("[SyncWatch] Video element found");
       logger.info("Content Script", "Video element found");
 
-      // Check for stored room before initializing socket
       const storedRoomId = await checkStoredRoom();
       if (storedRoomId && !state.roomId) {
         state.roomId = storedRoomId;
         console.log(`[SyncWatch] Will auto-reconnect to room: ${storedRoomId}`);
       }
 
-      // Initialize socket connection
       state.socket = initSocket();
-
-      // Setup video listeners
       setupVideoListeners(video);
-
-      // Expose API to window for popup/background script communication
-      // IMPORTANT: We need to expose this in the MAIN world, not ISOLATED world
-      // So we inject a script tag that has access to the page's window object
 
       const api: SyncWatchAPI = {
         joinRoom,
@@ -744,46 +687,24 @@ function init(): void {
         },
       };
 
-      // Expose in ISOLATED world (for content script access)
       (window as unknown as { syncWatch: SyncWatchAPI }).syncWatch = api;
-
-      // Setup listener to communicate with MAIN world script
-      // The MAIN world script (main-world.ts) is injected via manifest.json
       setupMessageListener(api);
 
-      console.log("[SyncWatch] Ready! Use window.syncWatch.createRoom() or window.syncWatch.joinRoom('roomId')");
-      logger.info("Content Script", "SyncWatch API ready and exposed to window");
+      console.log("[SyncWatch] Ready!");
+      logger.info("Content Script", "SyncWatch API ready");
     }
   }, 500);
 
-  // Timeout after 30 seconds
   setTimeout(() => {
     clearInterval(checkForVideo);
     if (!state.videoElement) {
       console.log("[SyncWatch] No video element found after 30 seconds");
-      logger.warn("Content Script", "No video element found after 30 seconds", { url: window.location.href });
+      logger.warn("Content Script", "No video element found after 30 seconds");
     }
   }, 30000);
 }
 
-// API interface for external communication
-interface SyncWatchAPI {
-  joinRoom: (roomId: string) => void;
-  createRoom: () => string;
-  getState: () => {
-    isConnected: boolean;
-    roomId: string | null;
-    username: string;
-    isBuffering: boolean;
-    partnerBuffering: boolean;
-    partnerLoading: boolean;
-    isReady: boolean;
-    socketId: string | null;
-  };
-  setUsername: (name: string) => void;
-}
-
-// Start initialization when DOM is ready
+// Start initialization
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
 } else {

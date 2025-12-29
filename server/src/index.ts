@@ -177,10 +177,11 @@ io.on("connection", (socket: Socket) => {
       currentTime: data.currentTime,
       timestamp: data.timestamp,
       initiatedBy: socket.id,
+      username: userInfo.username,
     });
 
     console.log(
-      `[Play] Room ${userInfo.roomId}: Play at ${data.currentTime.toFixed(2)}s`
+      `[Play] Room ${userInfo.roomId}: ${userInfo.username} played at ${data.currentTime.toFixed(2)}s`
     );
   });
 
@@ -200,10 +201,11 @@ io.on("connection", (socket: Socket) => {
       currentTime: data.currentTime,
       timestamp: data.timestamp,
       initiatedBy: socket.id,
+      username: userInfo.username,
     });
 
     console.log(
-      `[Pause] Room ${userInfo.roomId}: Pause at ${data.currentTime.toFixed(2)}s`
+      `[Pause] Room ${userInfo.roomId}: ${userInfo.username} paused at ${data.currentTime.toFixed(2)}s`
     );
   });
 

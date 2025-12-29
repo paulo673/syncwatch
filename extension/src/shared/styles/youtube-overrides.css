@@ -1,0 +1,22 @@
+/* YouTube layout overrides when SyncWatch chat is open */
+
+:root {
+  --syncwatch-chat-width: 320px;
+}
+
+body.syncwatch-chat-open {
+  margin-right: var(--syncwatch-chat-width) !important;
+}
+
+body.syncwatch-chat-open #player-container {
+  max-width: calc(100vw - var(--syncwatch-chat-width)) !important;
+}
+
+body.syncwatch-chat-open ytd-watch-flexy[theater] #player-theater-container {
+  max-width: calc(100vw - var(--syncwatch-chat-width)) !important;
+}
+
+/* Hide chat in fullscreen mode */
+ytd-watch-flexy[fullscreen] #syncwatch-root {
+  display: none !important;
+}
