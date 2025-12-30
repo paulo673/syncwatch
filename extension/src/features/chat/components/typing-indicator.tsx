@@ -24,12 +24,12 @@ export function TypingIndicator({
   }
 
   return (
-    <div className="sw-px-3 sw-py-2 sw-text-xs sw-text-gray-500 sw-italic sw-flex sw-items-center sw-gap-1 sw-shrink-0">
+    <div className="sw:px-3 sw:py-2 sw:text-xs sw:text-gray-500 sw:italic sw:flex sw:items-center sw:gap-1 sw:shrink-0">
       <span>{text}</span>
-      <span className="sw-inline-flex sw-gap-1 sw-ml-1">
-        <span className="sw-w-1 sw-h-1 sw-bg-gray-500 sw-rounded-full sw-animate-typing-dot [animation-delay:0s]" />
-        <span className="sw-w-1 sw-h-1 sw-bg-gray-500 sw-rounded-full sw-animate-typing-dot [animation-delay:0.2s]" />
-        <span className="sw-w-1 sw-h-1 sw-bg-gray-500 sw-rounded-full sw-animate-typing-dot [animation-delay:0.4s]" />
+      <span className="sw:inline-flex sw:gap-1 sw:ml-1">
+        <span className="sw:w-1 sw:h-1 sw:bg-gray-500 sw:rounded-full sw:animate-typing-dot [animation-delay:0s]" />
+        <span className="sw:w-1 sw:h-1 sw:bg-gray-500 sw:rounded-full sw:animate-typing-dot [animation-delay:0.2s]" />
+        <span className="sw:w-1 sw:h-1 sw:bg-gray-500 sw:rounded-full sw:animate-typing-dot [animation-delay:0.4s]" />
       </span>
     </div>
   );

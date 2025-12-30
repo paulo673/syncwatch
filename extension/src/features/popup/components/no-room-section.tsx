@@ -64,9 +64,9 @@ export function NoRoomSection({
   };
 
   return (
-    <div className="sw-space-y-3">
+    <div className="sw:space-y-3">
       <div>
-        <label className="sw-block sw-text-xs sw-text-white/50 sw-mb-1">
+        <label className="sw:block sw:text-xs sw:text-white/50 sw:mb-1">
           Your Name
         </label>
         <Input
@@ -77,7 +77,7 @@ export function NoRoomSection({
       </div>
 
       <div>
-        <label className="sw-block sw-text-xs sw-text-white/50 sw-mb-1">
+        <label className="sw:block sw:text-xs sw:text-white/50 sw:mb-1">
           Room ID (optional)
         </label>
         <Input
@@ -87,11 +87,11 @@ export function NoRoomSection({
         />
       </div>
 
-      <div className="sw-flex sw-gap-2 sw-mt-4">
+      <div className="sw:flex sw:gap-2 sw:mt-4">
         <Button
           onClick={handleCreateRoom}
           disabled={isDisabled || isCreating}
-          className="sw-flex-1"
+          className="sw:flex-1"
         >
           {isCreating ? "Creating..." : "Create Room"}
         </Button>
@@ -99,7 +99,7 @@ export function NoRoomSection({
           variant="secondary"
           onClick={handleJoinRoom}
           disabled={isDisabled || isJoining}
-          className="sw-flex-1"
+          className="sw:flex-1"
         >
           {isJoining ? "Joining..." : "Join Room"}
         </Button>

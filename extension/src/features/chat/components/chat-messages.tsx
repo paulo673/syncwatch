@@ -35,9 +35,9 @@ export function ChatMessages({
 
   if (messages.length === 0) {
     return (
-      <div className="sw-flex-1 sw-flex sw-flex-col sw-items-center sw-justify-center sw-text-gray-500 sw-text-sm sw-p-5">
-        <MessageCircle className="sw-w-8 sw-h-8 sw-mb-3 sw-opacity-50" />
-        <p className="sw-text-center">
+      <div className="sw:flex-1 sw:flex sw:flex-col sw:items-center sw:justify-center sw:text-gray-500 sw:text-sm sw:p-5">
+        <MessageCircle className="sw:w-8 sw:h-8 sw:mb-3 sw:opacity-50" />
+        <p className="sw:text-center">
           No messages yet.
           <br />
           Start the conversation!
@@ -49,7 +49,7 @@ export function ChatMessages({
   return (
     <div
       ref={containerRef}
-      className="sw-flex-1 sw-overflow-y-auto sw-p-3 sw-flex sw-flex-col sw-gap-2"
+      className="sw:flex-1 sw:overflow-y-auto sw:p-3 sw:flex sw:flex-col sw:gap-2"
     >
       {messages.map((message) => (
         <MessageBubble

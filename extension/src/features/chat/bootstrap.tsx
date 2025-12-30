@@ -17,9 +17,10 @@ export function injectChat(callbacks: ChatCallbacks): boolean {
   }
 
   // Verify we're on a YouTube watch page with player
-  const playerContainer = document.querySelector("#player-container");
-  if (!playerContainer) {
-    console.log("[SyncWatch] #player-container not found, retrying...");
+  const YOUTUBE_PLAYER_SELECTOR = "#ytd-player"
+  const ytdPlayer = document.querySelector(YOUTUBE_PLAYER_SELECTOR);
+  if (!ytdPlayer || !ytdPlayer.parentNode) {
+    console.log(`[SyncWatch] ${YOUTUBE_PLAYER_SELECTOR} not found, retrying...`);
     return false;
   }
 
@@ -32,7 +33,7 @@ export function injectChat(callbacks: ChatCallbacks): boolean {
   // Create React root container
   const container = document.createElement("div");
   container.id = "syncwatch-root";
-  document.body.appendChild(container);
+  ytdPlayer.parentNode.insertBefore(container, ytdPlayer.nextSibling);
 
   // Create React root and render
   root = createRoot(container);

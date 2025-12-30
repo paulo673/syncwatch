@@ -36,7 +36,7 @@ export function ChatInput({
   };
 
   return (
-    <div className="sw-flex sw-gap-2 sw-p-3 sw-bg-white/5 sw-border-t sw-border-white/10 sw-shrink-0">
+    <div className="sw:flex sw:gap-2 sw:p-3 sw:bg-white/5 sw:border-t sw:border-white/10 sw:shrink-0">
       <Input
         value={message}
         onChange={handleChange}
@@ -45,16 +45,16 @@ export function ChatInput({
         maxLength={500}
         autoComplete="off"
         disabled={disabled}
-        className="sw-flex-1"
+        className="sw:flex-1"
       />
       <Button
         onClick={handleSend}
         disabled={disabled || !message.trim()}
         size="icon"
-        className="sw-rounded-full sw-w-9 sw-h-9 sw-bg-gradient-to-br sw-from-primary sw-to-primary-dark sw-shrink-0"
+        className="sw:rounded-full sw:w-9 sw:h-9 sw:bg-gradient-to-br sw:from-sky-500 sw:to-sky-600 sw:shrink-0"
         title="Send"
       >
-        <Send className="sw-w-4 sw-h-4" />
+        <Send className="sw:w-4 sw:h-4" />
       </Button>
     </div>
   );

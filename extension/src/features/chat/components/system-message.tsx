@@ -15,8 +15,8 @@ export function SystemMessage({ event }: SystemMessageProps) {
   const config = eventConfig[event.type];
 
   return (
-    <div className="sw-self-center sw-text-gray-500 sw-text-xs sw-italic sw-py-1 sw-text-center">
-      <span className="sw-mr-1">{config.icon}</span>
+    <div className="sw:self-center sw:text-gray-500 sw:text-xs sw:italic sw:py-1 sw:text-center">
+      <span className="sw:mr-1">{config.icon}</span>
       <span>{config.getText(event.username)}</span>
     </div>
   );

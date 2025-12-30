@@ -16,18 +16,15 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    rollupOptions: {
-      input: {
-        content: "src/content/index.ts",
-        background: "src/background/index.ts",
-      },
-    },
   },
   server: {
     port: 5173,
     strictPort: true,
     hmr: {
       port: 5173,
+    },
+    cors: {
+      origin: "*",
     },
   },
 });

@@ -46,11 +46,11 @@ export function LogsSection() {
   };
 
   return (
-    <div className="sw-mt-4 sw-pt-3 sw-border-t sw-border-white/10">
+    <div className="sw:mt-4 sw:pt-3 sw:border-t sw:border-white/10">
       <Button
         variant="ghost"
         onClick={handleViewLogs}
-        className="sw-w-full sw-text-xs sw-py-2"
+        className="sw:w-full sw:text-xs sw:py-2"
       >
         View Logs
       </Button>

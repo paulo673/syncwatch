@@ -55,12 +55,12 @@ export function App() {
   const showInRoom = status === "in-room" && state?.roomId;
 
   return (
-    <div className="sw-w-80 sw-min-h-[200px] sw-p-5 sw-bg-gradient-to-br sw-from-background sw-to-background-secondary sw-text-white">
-      <h1 className="sw-text-2xl sw-font-bold sw-mb-2 sw-flex sw-items-center sw-gap-2">
+    <div className="sw:w-80 sw:min-h-[200px] sw:p-5 sw:bg-gradient-to-br sw:from-slate-900 sw:to-slate-800 sw:text-white">
+      <h1 className="sw:text-2xl sw:font-bold sw:mb-2 sw:flex sw:items-center sw:gap-2">
         <span>🎬</span>
         <span>SyncWatch</span>
       </h1>
-      <p className="sw-text-xs sw-text-white/50 sw-mb-5">
+      <p className="sw:text-xs sw:text-white/50 sw:mb-5">
         Watch videos in sync with friends
       </p>
 
@@ -84,7 +84,7 @@ export function App() {
         />
       )}
 
-      <p className="sw-mt-5 sw-text-center sw-text-[11px] sw-text-white/30">
+      <p className="sw:mt-5 sw:text-center sw:text-[11px] sw:text-white/30">
         Go to YouTube and open a video to start
       </p>
 
