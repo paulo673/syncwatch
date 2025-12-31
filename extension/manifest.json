@@ -38,5 +38,6 @@
   "action": {
     "default_title": "SyncWatch",
     "default_popup": "src/features/popup/index.html"
-  }
+  },
+  "options_page": "src/features/options/index.html"
 }
